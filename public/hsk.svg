@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B0F19"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect x="64" y="64" width="896" height="896" rx="180" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="180" fill="none" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="8"/>
+  <!-- Centered glyph -->
+  <g transform="translate(512,512)">
+    <text text-anchor="middle" dominant-baseline="central" font-family="system-ui, 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-weight="800" font-size="520" fill="#FFFFFF">汉</text>
+  </g>
+</svg>

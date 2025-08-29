@@ -1,28 +1,22 @@
+// src/App.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import * as XLSX from "xlsx";
-import { v4 as uuidv4 } from "uuid";
+import excelFile from "./assets/vocab.xlsx?url";
 import {
   BookOpen,
   Brain,
   Check,
-  Clock,
-  Download,
   FileSpreadsheet,
   Layers,
   Play,
-  RefreshCw,
   RotateCcw,
-  Upload,
   X,
   BarChart3,
-  HelpCircle,
 } from "lucide-react";
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Minimal shadcn/ui shims — if the host already provides shadcn, these are unused
-// but having light inline components guarantees the preview won't crash.
-// Use Tailwind classes for styling.
+// Minimal UI shims (Tailwind)
 // ────────────────────────────────────────────────────────────────────────────────
 const Button = ({ className = "", variant = "default", size = "md", ...props }) => (
   <button
@@ -51,44 +45,35 @@ const Button = ({ className = "", variant = "default", size = "md", ...props }) 
 const Card = ({ className = "", ...props }) => (
   <div className={`rounded-3xl border border-gray-200 bg-white shadow-sm ${className}`} {...props} />
 );
-const CardHeader = ({ className = "", ...props }) => (
-  <div className={`p-5 border-b ${className}`} {...props} />
-);
-const CardContent = ({ className = "", ...props }) => (
-  <div className={`p-5 ${className}`} {...props} />
-);
+const CardHeader = ({ className = "", ...props }) => <div className={`p-6 border-b ${className}`} {...props} />;
+const CardContent = ({ className = "", ...props }) => <div className={`p-6 ${className}`} {...props} />;
 const Badge = ({ className = "", children }) => (
   <span className={`inline-flex items-center rounded-full bg-gray-900 text-white px-3 py-1 text-xs ${className}`}>{children}</span>
 );
 const Toggle = ({ checked, onChange }) => (
-  <button
-    onClick={() => onChange(!checked)}
-    className={`w-12 h-7 rounded-full p-1 transition ${checked ? "bg-black" : "bg-gray-300"}`}
-  >
+  <button onClick={() => onChange(!checked)} className={`w-12 h-7 rounded-full p-1 transition ${checked ? "bg-black" : "bg-gray-300"}`}>
     <div className={`w-5 h-5 bg-white rounded-full transition ${checked ? "translate-x-5" : "translate-x-0"}`} />
   </button>
 );
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Types
+// Types & helpers
 // ────────────────────────────────────────────────────────────────────────────────
 /** @typedef {{ id: string; level: number; hanzi: string; pinyin: string; english: string; }} Word */
 /** @typedef {{ box: number; due: number; seen: number; correct: number; incorrect: number; lastSeen?: number; }} CardProgress */
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────────
 const STORAGE_KEY = "hsk_app_progress_v1";
 const DATA_KEY = "hsk_app_vocab_v1";
 const SETTINGS_KEY = "hsk_app_settings_v1";
 
-const BOX_INTERVALS_DAYS = [0, 1, 2, 4, 7, 15, 30]; // Leitner-like
+const BOX_INTERVALS_DAYS = [0, 1, 2, 4, 7, 15, 30];
+const DEFAULT_NEW_PER_SESSION = 15;
 
-/** @param {Date} d */
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const nowTs = () => Date.now();
 const daysToMs = (d) => d * 24 * 60 * 60 * 1000;
-const randomInt = (n) => Math.floor(Math.random() * n);
+const norm = (s) => String(s || "").trim().toLowerCase();
 const shuffle = (arr) => {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -97,16 +82,8 @@ const shuffle = (arr) => {
   }
   return a;
 };
-
-/** Robust column name matching */
-const norm = (s) => String(s || "").trim().toLowerCase();
-
-/** Build a stable id from word content */
 const wordId = (w) => `${w.level}|${w.hanzi}|${w.pinyin}|${w.english}`;
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Local storage
-// ────────────────────────────────────────────────────────────────────────────────
 const loadJSON = (key, fallback) => {
   try {
     const raw = localStorage.getItem(key);
@@ -116,12 +93,21 @@ const loadJSON = (key, fallback) => {
   }
 };
 const saveJSON = (key, value) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
 };
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Demo data (small) used before import
-// ────────────────────────────────────────────────────────────────────────────────
+// Daily seed string based on LOCAL date
+const localDaySeed = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const dd = `${d.getDate()}`.padStart(2, "0");
+  return `${y}${m}${dd}`; // YYYYMMDD
+};
+
+// Demo fallback
 const DEMO = [
   { level: 1, hanzi: "爱", pinyin: "ài", english: "love" },
   { level: 1, hanzi: "谢谢", pinyin: "xièxie", english: "thanks" },
@@ -133,36 +119,33 @@ const DEMO = [
 ].map((w) => ({ id: wordId(w), ...w }));
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Excel parsing
+// Excel parsing & asset loading
 // ────────────────────────────────────────────────────────────────────────────────
-/**
- * Reads a user-provided .xlsx file with 6 sheets (HSK1..HSK6) and columns A/B/C = hanzi/pinyin/english.
- * Returns an array of Word
- */
-async function parseWorkbook(file) {
-  const buf = await file.arrayBuffer();
+async function parseArrayBufferToWords(buf) {
   const wb = XLSX.read(buf, { type: "array" });
   const words = [];
   const sheetNames = wb.SheetNames;
 
-  for (const sheetName of sheetNames) {
-    // level detection: try to parse the trailing digit(s)
+  for (let si = 0; si < sheetNames.length; si++) {
+    const sheetName = sheetNames[si];
     const m = /hsk\s*(\d)/i.exec(sheetName) || /(\d)/.exec(sheetName);
-    const level = m ? Number(m[1]) : undefined;
+    const levelFromName = m ? Number(m[1]) : si + 1; // fallback by index 1..6
+    const level = Number.isFinite(levelFromName) ? Math.max(1, Math.min(6, levelFromName)) : 1;
+
     const ws = wb.Sheets[sheetName];
     if (!ws) continue;
+
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
     if (!rows.length) continue;
 
-    // find header row
+    // Try to find a header in the first 5 rows
     let headerRow = rows[0];
-    // sometimes the first row can be blank; search first 5 rows for headers
     for (let i = 0; i < Math.min(5, rows.length) && (!headerRow || headerRow.length < 2); i++) {
       const candidate = rows[i] || [];
       const cols = candidate.map(norm);
       if (cols.includes("hanzi") || cols.includes("pinyin") || cols.includes("english")) {
         headerRow = rows[i];
-        rows.splice(0, i + 1); // remove header and rows before it
+        rows.splice(0, i + 1);
         break;
       }
     }
@@ -177,32 +160,31 @@ async function parseWorkbook(file) {
       const pinyin = String(row[idxPinyin] ?? "").trim();
       const english = String(row[idxEnglish] ?? "").trim();
       if (!hanzi || !pinyin || !english) continue;
-      const w = /** @type {Word} */ ({
-        id: "",
-        level: level ?? 0,
-        hanzi,
-        pinyin,
-        english,
-      });
+      const w = { id: "", level, hanzi, pinyin, english };
       w.id = wordId(w);
       words.push(w);
     }
   }
 
-  if (!words.length) throw new Error("Le fichier ne contient pas de données valides.");
+  if (!words.length) throw new Error("Bundled file seems empty.");
   return words;
 }
 
+async function loadBundledExcel() {
+  const res = await fetch(excelFile);
+  if (!res.ok) throw new Error("Failed to load bundled vocabulary.");
+  const buf = await res.arrayBuffer();
+  return parseArrayBufferToWords(buf);
+}
+
 // ────────────────────────────────────────────────────────────────────────────────
-// Core SRS logic
+// SRS
 // ────────────────────────────────────────────────────────────────────────────────
-/** @param {CardProgress|undefined} pr */
 function nextOnCorrect(pr) {
-  const box = Math.min(6, (pr?.box ?? -1) + 1); // -1 for brand new -> 0
+  const box = Math.min(6, (pr?.box ?? -1) + 1);
   const due = startOfDay(new Date(Date.now() + daysToMs(BOX_INTERVALS_DAYS[box]))).getTime();
   return { box, due };
 }
-/** @param {CardProgress|undefined} pr */
 function nextOnWrong(pr) {
   const box = Math.max(0, (pr?.box ?? 0) - 1);
   const due = startOfDay(new Date()).getTime();
@@ -210,54 +192,100 @@ function nextOnWrong(pr) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Main App
-// ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [allWords, setAllWords] = useState(/** @type {Word[]} */ (loadJSON(DATA_KEY, DEMO)));
-  const [progress, setProgress] = useState(/** @type {Record<string, CardProgress>} */ (loadJSON(STORAGE_KEY, {})));
-  const [settings, setSettings] = useState(loadJSON(SETTINGS_KEY, { selectedLevel: 1, newPerSession: 15, includeReviews: true, quizType: "mc" }));
-  const [tab, setTab] = useState("learn");
-  const [sessionQueue, setSessionQueue] = useState(/** @type {Word[]} */ ([]));
-  const [current, setCurrent] = useState(/** @type {Word|null} */ (null));
+  const [allWords, setAllWords] = useState(loadJSON(DATA_KEY, DEMO)); /** @type {Word[]} */
+  const [progress, setProgress] = useState(loadJSON(STORAGE_KEY, {})); /** @type {Record<string, CardProgress>} */
+  const [settings, setSettings] = useState(
+    loadJSON(SETTINGS_KEY, { selectedLevel: 1, newPerSession: DEFAULT_NEW_PER_SESSION, includeReviews: true, quizType: "mc" })
+  );
+  const [tab, setTab] = useState("learn"); // "learn" | "test" | "browse"
+  const [sessionQueue, setSessionQueue] = useState([]); /** @type {Word[]} */
+  const [current, setCurrent] = useState(null); /** @type {Word|null} */
   const [revealed, setRevealed] = useState(false);
   const [stats, setStats] = useState({ reviewed: 0, correct: 0, wrong: 0 });
-  const fileInputRef = useRef(null);
 
-  useEffect(() => { saveJSON(DATA_KEY, allWords); }, [allWords]);
-  useEffect(() => { saveJSON(STORAGE_KEY, progress); }, [progress]);
-  useEffect(() => { saveJSON(SETTINGS_KEY, settings); }, [settings]);
+  const selectedLevel = useMemo(() => Number(settings.selectedLevel) || 1, [settings.selectedLevel]);
+
+  useEffect(() => saveJSON(DATA_KEY, allWords), [allWords]);
+  useEffect(() => saveJSON(STORAGE_KEY, progress), [progress]);
+  useEffect(() => saveJSON(SETTINGS_KEY, settings), [settings]);
+
+  // Autoload bundled vocab once (replace demo)
+  useEffect(() => {
+    const looksLikeDemo =
+      allWords.length === DEMO.length && allWords.every((w, i) => w.id === DEMO[i].id);
+    if (looksLikeDemo) {
+      loadBundledExcel()
+        .then((words) => setAllWords(words))
+        .catch((err) => console.warn("Bundled vocab not loaded:", err?.message));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Derived stats (use local day bounds)
+  const now = nowTs();
+  const todayStart = startOfDay(new Date()).getTime();
+  const todayEnd = endOfDay(new Date()).getTime();
+
+  const totals = useMemo(() => {
+    const total = allWords.length;
+    let learned = 0;
+    let due = 0;
+    let dueToday = 0;
+    for (const w of allWords) {
+      const pr = progress[w.id];
+      if (pr?.box >= 3) learned++;
+      if (pr?.due != null) {
+        if (pr.due <= now) due++;
+        if (pr.due >= todayStart && pr.due <= todayEnd) dueToday++;
+      }
+    }
+    return { total, learned, due, dueToday };
+  }, [allWords, progress, now, todayStart, todayEnd]);
 
   const levels = useMemo(() => {
     const by = new Map();
-    for (const w of allWords) {
-      by.set(w.level, (by.get(w.level) || 0) + 1);
-    }
+    for (const w of allWords) by.set(w.level, (by.get(w.level) || 0) + 1);
     return Array.from({ length: 6 }, (_, i) => ({ level: i + 1, total: by.get(i + 1) || 0 }));
   }, [allWords]);
 
   const dueCountByLevel = useMemo(() => {
-    const now = nowTs();
     const by = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
     for (const w of allWords) {
-      if (!w.level) continue;
       const pr = progress[w.id];
-      if (pr && pr.due <= now) by[w.level]++;
+      if (w.level && pr && pr.due <= now) by[w.level]++;
     }
     return by;
-  }, [allWords, progress]);
+  }, [allWords, progress, now]);
 
-  function startSession() {
-    const now = nowTs();
-    // filter by chosen level
-    const pool = allWords.filter((w) => w.level === Number(settings.selectedLevel));
-    const due = pool.filter((w) => progress[w.id]?.due <= now);
+  // Build a queue of exactly N cards (prefer due, then new, then fill with others if needed)
+  function buildQueueForLevel(level, targetCount) {
+    const pool = allWords.filter((w) => Number(w.level) === level);
+    if (!pool.length) return [];
+
+    const due = pool.filter((w) => progress[w.id]?.due <= nowTs());
     const newOnes = pool.filter((w) => !progress[w.id]);
+    const others = pool.filter((w) => progress[w.id] && progress[w.id].due > nowTs()); // scheduled in future
 
-    const takeNew = Math.min(settings.newPerSession, newOnes.length);
-    const review = settings.includeReviews ? due : [];
+    const ordered = [];
+    if (settings.includeReviews) ordered.push(...shuffle(due));
+    ordered.push(...shuffle(newOnes));
 
-    const queue = shuffle([...review, ...shuffle(newOnes).slice(0, takeNew)]);
+    // complete to target with others if still short
+    if (ordered.length < targetCount) {
+      const need = targetCount - ordered.length;
+      ordered.push(...shuffle(others).slice(0, need));
+    }
 
+    return ordered.slice(0, targetCount);
+  }
+
+  function startSession(level = selectedLevel, count = settings.newPerSession || DEFAULT_NEW_PER_SESSION) {
+    const queue = buildQueueForLevel(level, count);
+    if (queue.length === 0) {
+      alert("No cards available for this level.");
+      return;
+    }
     setSessionQueue(queue);
     setCurrent(queue[0] || null);
     setRevealed(false);
@@ -269,59 +297,13 @@ export default function App() {
     const id = current.id;
     const prev = progress[id] || { box: -1, due: 0, seen: 0, correct: 0, incorrect: 0 };
     const { box, due } = correct ? nextOnCorrect(prev) : nextOnWrong(prev);
-    const upd = {
-      ...prev,
-      box,
-      due,
-      seen: prev.seen + 1,
-      correct: prev.correct + (correct ? 1 : 0),
-      incorrect: prev.incorrect + (!correct ? 1 : 0),
-      lastSeen: nowTs(),
-    };
+    const upd = { ...prev, box, due, seen: prev.seen + 1, correct: prev.correct + (correct ? 1 : 0), incorrect: prev.incorrect + (!correct ? 1 : 0), lastSeen: nowTs() };
     setProgress((p) => ({ ...p, [id]: upd }));
-
     setStats((s) => ({ ...s, reviewed: s.reviewed + 1, correct: s.correct + (correct ? 1 : 0), wrong: s.wrong + (!correct ? 1 : 0) }));
-
     const next = sessionQueue[1];
     setSessionQueue((q) => q.slice(1));
     setCurrent(next || null);
     setRevealed(false);
-  }
-
-  function importExcel(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    parseWorkbook(file)
-      .then((words) => {
-        // normalize ids
-        const normalized = words.map((w) => ({ ...w, id: wordId(w) }));
-        setAllWords(normalized);
-      })
-      .catch((err) => alert("Import échoué: " + err.message));
-  }
-
-  function exportProgress() {
-    const payload = { progress, exportedAt: new Date().toISOString(), version: 1 };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "hsk-progress.json";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function importProgress(evt) {
-    const file = evt.target.files?.[0];
-    if (!file) return;
-    file.text().then((txt) => {
-      try {
-        const data = JSON.parse(txt);
-        if (data && data.progress) setProgress(data.progress);
-      } catch (e) {
-        alert("Fichier invalide.");
-      }
-    });
   }
 
   const vocabByLevel = useMemo(() => {
@@ -335,32 +317,27 @@ export default function App() {
     return by;
   }, [allWords]);
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Quiz logic
-  // ────────────────────────────────────────────────────────────────────────────
+  // Quiz
   const [quizQueue, setQuizQueue] = useState([]);
   const [quizIdx, setQuizIdx] = useState(0);
   const [quizChoices, setQuizChoices] = useState([]);
   const [quizScore, setQuizScore] = useState({ correct: 0, total: 0 });
   const [quizAnswered, setQuizAnswered] = useState(null);
 
-  function startQuiz() {
-    const pool = allWords.filter((w) => w.level === Number(settings.selectedLevel));
+  function startQuiz(level = selectedLevel) {
+    const pool = allWords.filter((w) => Number(w.level) === level);
     const q = shuffle(pool).slice(0, Math.min(30, pool.length));
     setQuizQueue(q);
     setQuizIdx(0);
     setQuizScore({ correct: 0, total: q.length });
     setQuizAnswered(null);
-
     if (q.length) prepareChoices(q[0], pool);
   }
-
   function prepareChoices(answer, pool) {
     const others = shuffle(pool.filter((w) => w.id !== answer.id)).slice(0, 3);
     const opts = shuffle([answer, ...others]).map((w) => ({ id: w.id, label: settings.quizType === "mc" ? w.english : w.hanzi }));
     setQuizChoices(opts);
   }
-
   function answerQuiz(choiceId) {
     const cur = quizQueue[quizIdx];
     const right = cur.id === choiceId;
@@ -372,134 +349,187 @@ export default function App() {
     const nextI = quizIdx + 1;
     if (nextI >= quizQueue.length) {
       setQuizAnswered(null);
-      return; // finished
+      return;
     }
-    const pool = allWords.filter((w) => w.level === Number(settings.selectedLevel));
+    const pool = allWords.filter((w) => Number(w.level) === selectedLevel);
     prepareChoices(quizQueue[nextI], pool);
     setQuizIdx(nextI);
     setQuizAnswered(null);
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Keyboard shortcuts for flashcards
-  // ────────────────────────────────────────────────────────────────────────────
+  // Keyboard shortcuts (SRS) — FIX: ne pas réécraser setRevealed(false) de handleAnswer
   useEffect(() => {
     const onKey = (e) => {
       if (tab !== "learn") return;
-      if (e.key === " " || e.key === "Enter") { e.preventDefault(); setRevealed((r) => !r); }
+
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        if (!revealed) {
+          // 1ère pression : révéler
+          setRevealed(true);
+        } else {
+          // 2ème pression : valider comme "je savais" et passer à la suivante (qui sera masquée)
+          handleAnswer(true);
+        }
+        return;
+      }
+
       if (e.key === "ArrowRight") handleAnswer(true);
       if (e.key === "ArrowLeft") handleAnswer(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, current]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, revealed, current]);
+
+  // Word of the day (local date seed)
+  const wordOfTheDay = useMemo(() => {
+    const pool = allWords.filter((w) => Number(w.level) === selectedLevel);
+    if (!pool.length) return null;
+    const seed = Number(localDaySeed()); // YYYYMMDD (local)
+    const idx = seed % pool.length;
+    return pool[idx];
+  }, [allWords, selectedLevel]);
+
+  // When level changes: auto-start learn/test with defaults
+  function handleLevelChange(lv) {
+    setSettings((s) => ({ ...s, selectedLevel: lv }));
+    if (tab === "learn") {
+      startSession(lv, settings.newPerSession || DEFAULT_NEW_PER_SESSION);
+    } else if (tab === "test") {
+      startQuiz(lv);
+    }
+  }
 
   // ────────────────────────────────────────────────────────────────────────────
   // UI
   // ────────────────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 text-gray-900">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white via-gray-50 to-gray-100 text-gray-900">
       {/* Header */}
       <header className="sticky top-0 z-30 backdrop-blur bg-white/70 border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-black text-white font-bold">HSK</span>
+        <div className="w-full max-w-[1920px] mx-auto px-10 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {/* Logo 汉 */}
+            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-black text-white text-2xl font-semibold tracking-tight">汉</span>
             <div>
-              <h1 className="text-xl font-semibold tracking-tight">HSK All‑in‑One</h1>
-              <p className="text-xs text-gray-500">Vocab • Flashcards (SRS) • Tests</p>
+              <h1 className="text-2xl font-semibold tracking-tight">HSK Complete</h1>
+              <p className="text-xs text-gray-500">Vocabulary • Flashcards • Tests</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => (fileInputRef.current?.click())}>
-              <Upload className="h-4 w-4" /> Importer Excel
-            </Button>
-            <input ref={fileInputRef} type="file" accept=".xlsx" onChange={importExcel} className="hidden" />
-            <Button variant="outline" onClick={exportProgress}>
-              <Download className="h-4 w-4" /> Exporter progrès
-            </Button>
-            <label className="cursor-pointer">
-              <input type="file" accept="application/json" className="hidden" onChange={importProgress} />
-              <span className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl border border-gray-300 hover:bg-gray-50">
-                <Upload className="h-4 w-4" /> Importer progrès
-              </span>
-            </label>
-          </div>
+          <div />
         </div>
       </header>
 
+      {/* Hero + Dashboard */}
+      <section className="w-full max-w-[1920px] mx-auto px-10 pt-6">
+        <div className="rounded-3xl border bg-white shadow-sm px-8 py-5">
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+            <div>
+              <div className="text-2xl font-semibold tracking-tight">Welcome 👋</div>
+              <div className="text-gray-600 mt-1">
+                Current level <span className="font-semibold">HSK {selectedLevel}</span> — {levels.find(l => l.level === selectedLevel)?.total || 0} words.
+              </div>
+              {wordOfTheDay && (
+                <div className="mt-3 inline-flex items-center gap-3 rounded-2xl border px-4 py-2.5 bg-gray-50">
+                  <span className="text-2xl font-semibold tracking-tight">{wordOfTheDay.hanzi}</span>
+                  <span className="text-gray-700">{wordOfTheDay.pinyin}</span>
+                  <span className="text-gray-500">· {wordOfTheDay.english}</span>
+                  <Badge className="ml-2">Word of the day</Badge>
+                </div>
+              )}
+            </div>
+
+            {/* Dashboard cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 xl:gap-5 flex-1">
+              <StatCard label="Total words" value={totals.total} />
+              <StatCard label="Learned (box ≥ 3)" value={totals.learned} accent="emerald" />
+              <StatCard label="Due reviews (≤ now)" value={totals.due} accent="amber" />
+              <StatCard label="Due today (local)" value={totals.dueToday} accent="blue" />
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Main */}
-      <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-[360px,1fr] gap-8">
-        {/* Controls */}
+      <main className="w-full max-w-[1920px] mx-auto px-10 py-6 grid grid-cols-1 xl:grid-cols-[360px,1fr] 2xl:grid-cols-[420px,1fr] gap-8">
+        {/* Sidebar / Controls */}
         <section className="lg:col-span-1 space-y-6">
-          <Card>
+          <Card className="sticky top-[84px]">
             <CardHeader className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Layers className="h-5 w-5" />
-                <h2 className="font-semibold">Paramètres</h2>
+                <h2 className="font-semibold">Settings</h2>
               </div>
               <Badge>Beta</Badge>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-5">
+              {/* Level selector */}
               <div>
-                <label className="text-sm text-gray-600">Niveau HSK</label>
-                <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {levels.map(({ level, total }) => (
-                    <Button
-                      key={level}
-                      variant={settings.selectedLevel === level ? "default" : "outline"}
-                      className="w-full flex flex-col items-center text-sm"
-                      onClick={() => setSettings((s) => ({ ...s, selectedLevel: level }))}
-                    >
-                      <span className="font-medium">{level}</span>
-                      <span className="text-xs opacity-70">{total}</span>
-                       {dueCountByLevel[level] ? (
-                        <span className="mt-1 text-[10px] rounded-full bg-yellow-400 text-black px-2 py-0.5">
-			  {dueCountByLevel[level]} dûs
-			</span>
-                      ) : null}
-                    </Button>
-                  ))}
+                <label className="text-sm text-gray-600">HSK level</label>
+                <LevelSelector
+                  levels={levels}
+                  selected={selectedLevel}
+                  dueCountByLevel={dueCountByLevel}
+                  onSelect={handleLevelChange}
+                />
+                <div className="mt-2 text-xs text-gray-500">
+                  {levels.find(l => l.level === selectedLevel)?.total || 0} words in selected level
                 </div>
               </div>
 
               <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm text-gray-600">Inclure révisions dues</div>
-                </div>
-                <Toggle
-                  checked={!!settings.includeReviews}
-                  onChange={(v) => setSettings((s) => ({ ...s, includeReviews: v }))}
-                />
+                <div className="text-sm text-gray-600">Include due reviews</div>
+                <Toggle checked={!!settings.includeReviews} onChange={(v) => setSettings((s) => ({ ...s, includeReviews: v }))} />
               </div>
 
               <div>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Nouveaux mots / session</span>
+                  <span className="text-sm text-gray-600">New words per session</span>
                   <span className="text-sm font-mono">{settings.newPerSession}</span>
                 </div>
                 <input
-                  type="range" min={5} max={50} step={1}
+                  type="range"
+                  min={5}
+                  max={50}
+                  step={1}
                   value={settings.newPerSession}
                   onChange={(e) => setSettings((s) => ({ ...s, newPerSession: Number(e.target.value) }))}
                   className="w-full"
                 />
               </div>
 
-              <div>
-                <div className="text-sm text-gray-600 mb-1">Type de quiz</div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant={settings.quizType === "mc" ? "default" : "outline"} onClick={() => setSettings((s) => ({ ...s, quizType: "mc" }))}>QCM</Button>
-                  <Button variant={settings.quizType === "typing" ? "default" : "outline"} onClick={() => setSettings((s) => ({ ...s, quizType: "typing" }))}>Saisie</Button>
-                </div>
-              </div>
+              {/* Big animated buttons with active styling */}
+              <div className="grid grid-cols-2 gap-2">
+                <motion.button
+                  whileHover={{ scale: 1.02, rotate: -0.4 }}
+                  whileTap={{ scale: 0.97, rotate: 0 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 20 }}
+                  className={
+                    "min-w-[160px] inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 shadow-sm hover:shadow-md border " +
+                    (tab === "learn"
+                      ? "bg-black text-white border-transparent"
+                      : "bg-white text-gray-900 border-gray-300")
+                  }
+                  onClick={() => { setTab("learn"); startSession(selectedLevel, settings.newPerSession || DEFAULT_NEW_PER_SESSION); }}
+                >
+                  <Play className="h-4 w-4" /> Learn
+                </motion.button>
 
-              <div className="flex gap-2">
-                <Button className="flex-1 min-w-[160px]" onClick={() => { setTab("learn"); startSession(); }}>
-                  <Play className="h-4 w-4" /> Démarrer apprentissage
-                </Button>
-                <Button className="flex-1 min-w-[160px]" variant="outline" onClick={() => { setTab("test"); startQuiz(); }}>
-                  <Brain className="h-4 w-4" /> Démarrer test
-                </Button>
+                <motion.button
+                  whileHover={{ scale: 1.02, rotate: 0.4 }}
+                  whileTap={{ scale: 0.97, rotate: 0 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 20 }}
+                  className={
+                    "min-w-[160px] inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2.5 shadow-sm hover:shadow-md border " +
+                    (tab === "test"
+                      ? "bg-black text-white border-transparent"
+                      : "bg-white text-gray-900 border-gray-300")
+                  }
+                  onClick={() => { setTab("test"); startQuiz(selectedLevel); }}
+                >
+                  <Brain className="h-4 w-4" /> Test
+                </motion.button>
               </div>
             </CardContent>
           </Card>
@@ -507,205 +537,306 @@ export default function App() {
           <Card>
             <CardHeader className="flex items-center gap-2">
               <BarChart3 className="h-5 w-5" />
-              <h2 className="font-semibold">Statistiques</h2>
+              <h2 className="font-semibold">Session stats</h2>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <div className="text-2xl font-bold">{stats.reviewed}</div>
-                  <div className="text-xs text-gray-500">Révisés</div>
+                  <div className="text-xs text-gray-500">Reviewed</div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-emerald-600">{stats.correct}</div>
-                  <div className="text-xs text-gray-500">Justes</div>
+                  <div className="text-xs text-gray-500">Correct</div>
                 </div>
                 <div>
                   <div className="text-2xl font-bold text-red-600">{stats.wrong}</div>
-                  <div className="text-xs text-gray-500">Faux</div>
+                  <div className="text-xs text-gray-500">Wrong</div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex items-center gap-2">
-              <HelpCircle className="h-5 w-5" />
-              <h2 className="font-semibold">Comment importer ?</h2>
-            </CardHeader>
-            <CardContent className="text-sm text-gray-600 space-y-2">
-              <p>Votre fichier est local (<code>C:\\Users\\...\\Chinese Voc.xlsx</code>). Une app web <strong>ne peut pas</strong> lire ce chemin directement. Utilisez le bouton « Importer Excel » ci‑dessus et sélectionnez le fichier.</p>
-              <p>Attendu : 6 onglets (HSK1…HSK6), colonnes A=hanzi, B=pinyin, C=english avec une ligne d’en‑tête.</p>
-              <p>Vos progrès sont enregistrés en local (navigateur). Vous pouvez les exporter/importer.</p>
             </CardContent>
           </Card>
         </section>
 
         {/* Workspace */}
         <section className="lg:col-span-1 space-y-6">
-          {/* Tabs */}
-          <div className="flex gap-2">
-            <Button variant={tab === "learn" ? "default" : "outline"} onClick={() => setTab("learn")}>Apprentissage</Button>
-            <Button variant={tab === "test" ? "default" : "outline"} onClick={() => setTab("test")}>Test</Button>
-            <Button variant={tab === "browse" ? "default" : "outline"} onClick={() => setTab("browse")}>Vocabulaire</Button>
-          </div>
-
-          {/* Learn Tab */}
-          {tab === "learn" && (
-            <Card className="min-h-[440px] flex flex-col">
-              <CardHeader className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="h-5 w-5" />
-                  <h2 className="font-semibold">Cartes mémoire (SRS)</h2>
-                </div>
-                <div className="text-sm text-gray-600 flex flex-wrap gap-1">Niveau HSK {settings.selectedLevel} • {sessionQueue.length + (current ? 1 : 0)} cartes</div>
-              </CardHeader>
-              <CardContent className="flex-1 flex flex-col items-center justify-center">
-                {current ? (
-                  <div className="w-full max-w-xl">
-                    <AnimatePresence mode="wait">
-                      <motion.div
-                        key={current.id + String(revealed)}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        className="rounded-3xl border bg-white p-8 shadow-sm"
-                      >
-                        <div className="text-center space-y-6">
-                          <div className="text-4xl md:text-6xl font-semibold tracking-tight">
-                            {current.hanzi}
-                          </div>
-                          {revealed ? (
-                            <div className="space-y-2">
-                              <div className="text-xl md:text-2xl">{current.pinyin}</div>
-                              <div className="text-gray-600">{current.english}</div>
-                            </div>
-                          ) : (
-                            <div className="text-sm text-gray-400">Appuyer sur <kbd className="px-1.5 py-0.5 rounded border">Espace</kbd> pour révéler</div>
-                          )}
-                        </div>
-                      </motion.div>
-                    </AnimatePresence>
-
-                    <div className="mt-6 flex items-center justify-center gap-3">
-                      {!revealed ? (
-                        <Button size="lg" onClick={() => setRevealed(true)} className="min-w-[180px]">
-                          <EyeIcon className="h-5 w-5" /> Révéler
-                        </Button>
-                      ) : (
-                        <>
-                          <Button size="lg" variant="destructive" onClick={() => handleAnswer(false)} className="min-w-[140px]">
-                            <X className="h-5 w-5" /> Faux
-                          </Button>
-                          <Button size="lg" onClick={() => handleAnswer(true)} className="min-w-[140px]">
-                            <Check className="h-5 w-5" /> Je savais
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-gray-600">
-                    <p className="mb-4">Aucune carte en cours.</p>
-                    <Button onClick={startSession}><Play className="h-4 w-4" /> Lancer une session</Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Test Tab */}
-          {tab === "test" && (
-            <Card className="min-h-[440px]">
-              <CardHeader className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Brain className="h-5 w-5" />
-                  <h2 className="font-semibold">Test (niveau {settings.selectedLevel})</h2>
-                </div>
-                <div className="text-sm text-gray-600">Score : {quizScore.correct}/{quizScore.total}</div>
-              </CardHeader>
-              <CardContent>
-                {quizQueue.length ? (
-                  <div className="max-w-2xl mx-auto">
-                    <div className="mb-6 text-center">
-                      <div className="text-4xl font-semibold">
-                        {settings.quizType === "mc" ? quizQueue[quizIdx].hanzi : quizQueue[quizIdx].english}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-2">Question {quizIdx + 1}/{quizQueue.length}</div>
-                    </div>
-
-                    {settings.quizType === "mc" ? (
-                      <div className="grid md:grid-cols-2 gap-3">
-                        {quizChoices.map((ch) => (
-                          <button
-                            key={ch.id}
-                            onClick={() => answerQuiz(ch.id)}
-                            className={`rounded-2xl border p-4 text-left hover:bg-gray-50 transition ${quizAnswered && (quizQueue[quizIdx].id === ch.id ? "border-emerald-500" : "")}`}
-                          >
-                            {ch.label}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <TypingQuiz
-                        key={quizQueue[quizIdx].id + "-" + quizIdx}
-                        answer={quizQueue[quizIdx]}
-                        onSubmit={(ok) => {
-                          setQuizAnswered(ok ? "right" : "wrong");
-                          if (ok) setQuizScore((s) => ({ ...s, correct: s.correct + 1 }));
-                          setTimeout(() => nextQuiz(), 600);
-                        }}
+          {/* Segmented tabs with animated pill */}
+          <LayoutGroup id="main-tabs">
+            <div className="relative inline-flex rounded-2xl border border-gray-300 bg-white p-1">
+              {[
+                { id: "learn", label: "Learn" },
+                { id: "test", label: "Test" },
+                { id: "browse", label: "Browse" },
+              ].map((t) => {
+                const active = tab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className={
+                      "relative px-4 py-2 rounded-xl text-sm font-medium transition " +
+                      (active ? "text-white" : "text-gray-700 hover:text-black")
+                    }
+                    style={{ WebkitTapHighlightColor: "transparent" }}
+                  >
+                    {active && (
+                      <motion.span
+                        layoutId="tabPill"
+                        className="absolute inset-0 rounded-xl bg-black"
+                        transition={{ type: "spring", stiffness: 400, damping: 30 }}
                       />
                     )}
+                    <span className="relative z-10">{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </LayoutGroup>
 
-                    {!quizAnswered && (
-                      <div className="mt-6 text-center">
-                        <Button variant="outline" onClick={startQuiz}><RotateCcw className="h-4 w-4" /> Relancer</Button>
+          {/* Content with transitions — cards slightly higher */}
+          <AnimatePresence mode="wait">
+            {tab === "learn" && (
+              <motion.div
+                key="tab-learn"
+                initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.995 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                <Card className="min-h-[520px] flex flex-col max-w-5xl 2xl:max-w-6xl mx-auto w-full">
+                  <CardHeader className="flex items-center justify-between py-4">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="h-5 w-5" />
+                      <h2 className="font-semibold">SRS flashcards</h2>
+                    </div>
+                    <div className="text-sm text-gray-600 flex flex-wrap gap-1">
+                      HSK {selectedLevel} • {sessionQueue.length + (current ? 1 : 0)} cards
+                    </div>
+                  </CardHeader>
+                  <CardContent className="flex-1 flex flex-col items-center justify-start pt-6">
+                    {current ? (
+                      <div className="w-full max-w-2xl">
+                        <AnimatePresence mode="wait">
+                          <motion.div
+                            key={current.id + String(revealed)}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -8 }}
+                            className="rounded-3xl border bg-white p-8 shadow-sm"
+                          >
+                            <div className="text-center space-y-6">
+                              <div className="text-5xl md:text-7xl font-semibold tracking-tight">{current.hanzi}</div>
+                              {revealed ? (
+                                <div className="space-y-2">
+                                  <div className="text-2xl md:text-3xl">{current.pinyin}</div>
+                                  <div className="text-gray-600 text-lg">{current.english}</div>
+                                </div>
+                              ) : (
+                                <div className="text-sm text-gray-400">
+                                  Press <kbd className="px-1.5 py-0.5 rounded border">Space</kbd> to reveal
+                                </div>
+                              )}
+                            </div>
+                          </motion.div>
+                        </AnimatePresence>
+
+                        <div className="mt-6 flex items-center justify-center gap-4">
+                          {!revealed ? (
+                            <Button size="lg" onClick={() => setRevealed(true)} className="min-w-[200px]">
+                              <EyeIcon className="h-5 w-5" /> Reveal
+                            </Button>
+                          ) : (
+                            <>
+                              {/* Inverted order: I knew it first, then Wrong */}
+                              <Button size="lg" onClick={() => handleAnswer(true)} className="min-w-[160px]">
+                                <Check className="h-5 w-5" /> I knew it
+                              </Button>
+                              <Button size="lg" variant="destructive" onClick={() => handleAnswer(false)} className="min-w-[160px]">
+                                <X className="h-5 w-5" /> Wrong
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center text-gray-600">
+                        <p className="mb-3">No active card.</p>
+                        <Button onClick={() => startSession(selectedLevel, settings.newPerSession || DEFAULT_NEW_PER_SESSION)}>
+                          <Play className="h-4 w-4" /> Start a session
+                        </Button>
                       </div>
                     )}
-                  </div>
-                ) : (
-                  <div className="text-center text-gray-600">
-                    <p className="mb-4">Aucun quiz actif.</p>
-                    <Button onClick={startQuiz}><Brain className="h-4 w-4" /> Démarrer un test</Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
 
-          {/* Browse Tab */}
-          {tab === "browse" && (
-            <Card>
-              <CardHeader className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="h-5 w-5" />
-                  <h2 className="font-semibold">Vocabulaire (niveau {settings.selectedLevel})</h2>
-                </div>
-                <div className="text-sm text-gray-600">{(vocabByLevel.get(Number(settings.selectedLevel)) || []).length} entrées</div>
-              </CardHeader>
-              <CardContent>
-                <VocabTable
-                  rows={vocabByLevel.get(Number(settings.selectedLevel)) || []}
-                  getProgress={(id) => progress[id]}
-                />
-              </CardContent>
-            </Card>
-          )}
+            {tab === "test" && (
+              <motion.div
+                key="tab-test"
+                initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.995 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                <Card className="min-h-[520px] max-w-5xl 2xl:max-w-6xl mx-auto w-full">
+                  <CardHeader className="flex items-center justify-between py-4">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-5 w-5" />
+                      <h2 className="font-semibold">Test (level {selectedLevel})</h2>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Score: {quizScore.correct}/{quizScore.total}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-6">
+                    {quizQueue.length ? (
+                      <div className="max-w-3xl mx-auto">
+                        <div className="mb-6 text-center">
+                          <div className="text-4xl md:text-5xl font-semibold">
+                            {settings.quizType === "mc" ? quizQueue[quizIdx].hanzi : quizQueue[quizIdx].english}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-2">
+                            Question {quizIdx + 1}/{quizQueue.length}
+                          </div>
+                        </div>
+
+                        {settings.quizType === "mc" ? (
+                          <div className="grid md:grid-cols-2 gap-4">
+                            {quizChoices.map((ch) => (
+                              <button
+                                key={ch.id}
+                                onClick={() => answerQuiz(ch.id)}
+                                className={`rounded-2xl border p-4 text-left hover:bg-gray-50 transition ${
+                                  quizAnswered && (quizQueue[quizIdx].id === ch.id ? "border-emerald-500" : "")
+                                }`}
+                              >
+                                {ch.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <TypingQuiz
+                            key={quizQueue[quizIdx].id + "-" + quizIdx}
+                            answer={quizQueue[quizIdx]}
+                            onSubmit={(ok) => {
+                              setQuizAnswered(ok ? "right" : "wrong");
+                              if (ok) setQuizScore((s) => ({ ...s, correct: s.correct + 1 }));
+                              setTimeout(() => nextQuiz(), 600);
+                            }}
+                          />
+                        )}
+
+                        {!quizAnswered && (
+                          <div className="mt-6 text-center">
+                            <Button variant="outline" onClick={() => startQuiz(selectedLevel)}>
+                              <RotateCcw className="h-4 w-4" /> Restart
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center text-gray-600">
+                        <p className="mb-3">No active test.</p>
+                        <Button onClick={() => startQuiz(selectedLevel)}>
+                          <Brain className="h-4 w-4" /> Start a test
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+
+            {tab === "browse" && (
+              <motion.div
+                key="tab-browse"
+                initial={{ opacity: 0, y: 8, scale: 0.99 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.995 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                <Card>
+                  <CardHeader className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="h-5 w-5" />
+                      <h2 className="font-semibold">Vocabulary (level {selectedLevel})</h2>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {(vocabByLevel.get(selectedLevel) || []).length} entries
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <VocabTable rows={vocabByLevel.get(selectedLevel) || []} getProgress={(id) => progress[id]} />
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </section>
       </main>
 
-      <footer className="max-w-6xl mx-auto px-4 py-8 text-center text-sm text-gray-500">
-        <p>
-          Conçu pour un usage personnel et prêt à être étendu (compte utilisateur, sync cloud, paiements). Code 100% client‑side pour l’instant.
-        </p>
+      <footer className="w-full max-w-[1920px] mx-auto px-10 py-8 text-center text-sm text-gray-500">
+        <p>© 2025 HSK Complete - All rights reserved.</p>
       </footer>
     </div>
   );
 }
 
 // ────────────────────────────────────────────────────────────────────────────────
-// Small components
+// Secondary components
 // ────────────────────────────────────────────────────────────────────────────────
+function LevelSelector({ levels, selected, onSelect, dueCountByLevel }) {
+  return (
+    <div className="mt-3 grid grid-cols-6 gap-2">
+      {levels.map(({ level }) => {
+        const isActive = selected === level;
+        const due = dueCountByLevel[level] || 0;
+        return (
+          <button
+            key={level}
+            onClick={() => onSelect(level)}
+            className={
+              "relative h-12 rounded-xl border flex items-center justify-center " +
+              "transition shadow-sm select-none font-semibold leading-none " +
+              "tracking-tight [font-variant-numeric:tabular-nums] " +
+              (isActive
+                ? "bg-black text-white border-transparent"
+                : "bg-white text-gray-900 hover:bg-gray-50 border-gray-300")
+            }
+          >
+            <span className="text-base">{level}</span>
+            {due > 0 && (
+              <span
+                title={`${due} due`}
+                className="absolute -top-1 -right-1 inline-flex items-center justify-center
+                           h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-medium
+                           bg-amber-500 text-black border border-black/10"
+              >
+                {due}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatCard({ label, value, accent }) {
+  const accentMap = {
+    emerald: "text-emerald-600",
+    amber: "text-amber-600",
+    blue: "text-blue-600",
+  };
+  return (
+    <div className="rounded-2xl border bg-white p-4">
+      <div className={`text-2xl md:text-3xl font-bold ${accentMap[accent] || ""}`}>{value}</div>
+      <div className="text-xs text-gray-500 mt-1">{label}</div>
+    </div>
+  );
+}
+
 function VocabTable({ rows, getProgress }) {
   const [q, setQ] = useState("");
   const filtered = useMemo(() => {
@@ -716,18 +847,18 @@ function VocabTable({ rows, getProgress }) {
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-2">
         <input
           className="w-full rounded-2xl border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-black"
-          placeholder="Rechercher hanzi / pinyin / anglais"
+          placeholder="Search hanzi / pinyin / English"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-auto max-h-[70vh]">
         <table className="min-w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 text-gray-600">
+          <thead className="sticky top-0 bg-gray-50">
+            <tr className="text-gray-600">
               <th className="text-left p-3 font-medium">汉字</th>
               <th className="text-left p-3 font-medium">Pinyin</th>
               <th className="text-left p-3 font-medium">English</th>
@@ -757,9 +888,13 @@ function VocabTable({ rows, getProgress }) {
 
 function TypingQuiz({ answer, onSubmit }) {
   const [val, setVal] = useState("");
-  const [state, setState] = useState("idle"); // idle | right | wrong
+  const [state, setState] = useState("idle");
   const inputRef = useRef(null);
-  useEffect(() => { inputRef.current?.focus(); setVal(""); setState("idle"); }, [answer?.id]);
+  useEffect(() => {
+    inputRef.current?.focus();
+    setVal("");
+    setState("idle");
+  }, [answer?.id]);
 
   function submit() {
     const ok = norm(val) === norm(answer.hanzi);
@@ -769,23 +904,24 @@ function TypingQuiz({ answer, onSubmit }) {
 
   return (
     <div className="text-center">
-      <div className="mb-4 text-gray-600">Tapez le hanzi correspondant</div>
+      <div className="mb-4 text-gray-600">Type the matching hanzi</div>
       <input
         ref={inputRef}
         className={`w-full md:w-2/3 rounded-2xl border px-4 py-3 text-center text-xl ${state === "right" ? "border-emerald-500" : state === "wrong" ? "border-red-500" : ""}`}
         placeholder="输入汉字"
         value={val}
         onChange={(e) => setVal(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+        }}
       />
       <div className="mt-3">
-        <Button onClick={submit}>Valider</Button>
+        <Button onClick={submit}>Submit</Button>
       </div>
     </div>
   );
 }
 
-// simple Eye icon fallback
 function EyeIcon(props) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={"h-5 w-5"} {...props}>
