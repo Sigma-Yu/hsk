@@ -1,14 +1,474 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/hsk/hsk.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HSK Complete</title>
-    <script type="module" crossorigin src="/hsk/assets/index-BLKkKWN7.js"></script>
-    <link rel="stylesheet" crossorigin href="/hsk/assets/index-FTC7QSMt.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HSK Complete - Master Chinese with Smart Flashcards</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+
+    /* ===== Theme (aligned with App.jsx) ===== */
+    :root{
+      --primary:#0a0a0a;            /* black */
+      --primary-light:#111827;      /* gray-900 */
+      --text-primary:#0f172a;       /* slate-900 */
+      --text-secondary:#64748b;     /* slate-500/600 */
+      --border:#e5e7eb;             /* gray-200 */
+      --bg-gradient-start:#ffffff;
+      --bg-gradient-end:#f8fafc;
+
+      /* OK / BAD (match App.jsx buttons) */
+      --ok-1:#10b981;  /* emerald-500 */
+      --ok-2:#059669;  /* emerald-600 */
+      --bad-1:#ef4444; /* red-500 */
+      --bad-2:#b91c1c; /* red-700 */
+
+      --subtle-1:rgba(0,0,0,.06);
+      --subtle-2:rgba(0,0,0,.04);
+    }
+
+    body{
+      font-family:ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+                   Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+                   "Noto Color Emoji";
+      color:var(--text-primary);
+      overflow-x:hidden;
+      background:linear-gradient(135deg,var(--bg-gradient-start) 0%,var(--bg-gradient-end) 100%);
+    }
+
+    /* ===== Animations ===== */
+    @keyframes float{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-20px) rotate(2deg)}}
+    @keyframes pulse-glow{0%,100%{box-shadow:0 0 20px rgba(0,0,0,.25)}50%{box-shadow:0 0 40px rgba(0,0,0,.35)}}
+    @keyframes slide-up{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes character-float{0%{transform:translateY(0) rotate(-5deg);opacity:.08}50%{transform:translateY(-100vh) rotate(5deg);opacity:.15}100%{transform:translateY(-200vh) rotate(-5deg);opacity:0}}
+    @keyframes rotate{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+    @keyframes shine {
+      from { transform:translateX(-150%) skewX(-20deg); }
+      to   { transform:translateX(250%)  skewX(-20deg); }
+    }
+
+    /* ===== Header ===== */
+    header{
+      position:fixed;top:0;width:100%;
+      backdrop-filter:blur(10px);
+      background:rgba(255,255,255,.8);
+      border-bottom:1px solid var(--border);
+      z-index:1000;transition:all .3s ease;
+    }
+    nav{
+      max-width:1400px;margin:0 auto;padding:1.25rem 2rem;
+      display:flex;justify-content:space-between;align-items:center;
+    }
+    .logo{display:flex;align-items:center;gap:1rem;font-size:1.5rem;font-weight:700;cursor:pointer;transition:transform .3s}
+    .logo:hover{transform:scale(1.05)}
+    .logo-icon{
+      width:48px;height:48px;background:var(--primary);color:#fff;border-radius:16px;
+      display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;
+      box-shadow:0 4px 12px rgba(0,0,0,.15);
+    }
+    .nav-links{display:flex;gap:2rem;align-items:center}
+    .nav-links a{
+      color:var(--text-secondary);text-decoration:none;font-weight:500;transition:color .3s;position:relative;
+    }
+    .nav-links a::after{
+      content:"";position:absolute;bottom:-4px;left:0;width:0;height:2px;background:var(--primary);transition:width .3s;
+    }
+    .nav-links a:hover{color:var(--primary)}
+    .nav-links a:hover::after{width:100%}
+
+    /* ===== Buttons (shared look + hover anim) ===== */
+    .btn{
+      padding:1rem 2rem;border-radius:12px;font-weight:600;font-size:1.125rem;
+      cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, background .2s ease, color .2s ease;
+      text-decoration:none;display:inline-flex;align-items:center;gap:.6rem;position:relative;overflow:hidden;
+    }
+    .btn::before{
+      /* shine sweep */
+      content:"";position:absolute;top:0;bottom:0;left:-30%;
+      width:30%;opacity:0;pointer-events:none;
+      background:linear-gradient(90deg, rgba(255,255,255,.0) 0%, rgba(255,255,255,.35) 50%, rgba(255,255,255,.0) 100%);
+    }
+    .btn:hover{transform:translateY(-2px)}
+    .btn:hover::before{opacity:1;animation:shine .6s ease}
+
+    .btn-primary{background:var(--primary);color:#fff !important;border:none;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+    .btn-primary:hover{box-shadow:0 16px 42px rgba(0,0,0,.28)}
+
+    .btn-secondary{background:#fff;color:var(--primary);border:2px solid var(--border)}
+    .btn-secondary:hover{background:#f6f7f8;box-shadow:0 10px 26px rgba(0,0,0,.12)}
+
+    .btn-outline{background:#fff;border:2px solid var(--border);color:var(--primary)}
+    .btn-outline:hover{background:#f6f7f8;box-shadow:0 10px 26px rgba(0,0,0,.12)}
+
+    .btn-cta{background:#fff;color:var(--primary);padding:1.25rem 3rem;font-size:1.25rem;box-shadow:0 10px 30px rgba(0,0,0,.3);animation:pulse-glow 2s ease-in-out infinite}
+    .btn-cta:hover{transform:translateY(-2px) scale(1.01);animation:none}
+
+    .muted{color:var(--text-secondary)}
+
+    /* ===== Hero ===== */
+    .hero{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:7rem 2rem 4.5rem;position:relative;overflow:hidden}
+    .hero-bg{position:absolute;inset:0;background:
+      radial-gradient(ellipse at top right, var(--subtle-1) 0%, transparent 50%),
+      radial-gradient(ellipse at bottom left, var(--subtle-2) 0%, transparent 50%);pointer-events:none}
+    .floating-characters{position:absolute;width:100%;height:100%;overflow:hidden;pointer-events:none}
+    .floating-char{position:absolute;font-size:3rem;color:var(--primary);opacity:.08;animation:character-float 20s infinite linear}
+    .floating-char:nth-child(1){left:10%;animation-delay:0s}
+    .floating-char:nth-child(2){left:30%;animation-delay:4s}
+    .floating-char:nth-child(3){left:50%;animation-delay:8s}
+    .floating-char:nth-child(4){left:70%;animation-delay:12s}
+    .floating-char:nth-child(5){left:90%;animation-delay:16s}
+
+    .hero-content{max-width:1200px;width:100%;display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:center;position:relative;z-index:10}
+    .hero-text{animation:slide-up .8s ease-out}
+    .hero-title{font-size:clamp(2.6rem,5vw,4rem);font-weight:900;line-height:1.08;margin-bottom:1.25rem;color:var(--primary)}
+    .hero-description{font-size:1.15rem;color:var(--text-secondary);line-height:1.85;margin:0 0 2.75rem}
+    .hero-buttons{display:flex;gap:1rem;flex-wrap:wrap}
+
+    .hero-visual{position:relative;animation:slide-up .8s ease-out .2s both}
+    .app-preview{width:100%;max-width:500px;margin:0 auto;position:relative}
+    .app-card{background:#fff;border-radius:24px;padding:2rem;box-shadow:0 20px 60px rgba(0,0,0,.1);animation:float 6s ease-in-out infinite;position:relative}
+    .flashcard{background:linear-gradient(135deg,#f9fafb 0%,#f3f4f6 100%);border-radius:20px;padding:3rem 2rem;text-align:center;margin-bottom:1.5rem;border:2px solid #e5e7eb;position:relative;overflow:hidden}
+    .flashcard::before{content:"";position:absolute;top:-50%;right:-50%;width:100%;height:100%;background:radial-gradient(circle, rgba(0,0,0,.05) 0%, transparent 70%);pointer-events:none}
+    .flashcard-hanzi{font-size:4rem;font-weight:900;color:var(--primary);margin-bottom:1rem}
+    .flashcard-pinyin{font-size:1.5rem;color:var(--text-primary);margin-bottom:.5rem}
+    .flashcard-english{font-size:1.125rem;color:var(--text-secondary)}
+    .card-controls{display:flex;gap:1rem;justify-content:center}
+    .card-btn{padding:.75rem 1.5rem;border-radius:10px;border:none;font-weight:600;cursor:pointer;transition:transform .15s ease, filter .2s ease;color:#fff}
+    .card-btn:hover{transform:translateY(-2px)}
+    .card-btn-correct{background:linear-gradient(135deg,var(--ok-1) 0%,var(--ok-2) 100%)}
+    .card-btn-correct:hover{filter:brightness(.95)}
+    .card-btn-wrong{background:linear-gradient(135deg,var(--bad-1) 0%,var(--bad-2) 100%)}
+    .card-btn-wrong:hover{filter:brightness(.95)}
+
+    /* ===== Features ===== */
+    .features{padding:5rem 2rem;background:#fff;position:relative}
+    .features::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--border),transparent)}
+    .container{max-width:1200px;margin:0 auto}
+    .section-title{text-align:center;font-size:3rem;font-weight:900;margin-bottom:1rem;color:var(--primary)}
+    .section-subtitle{text-align:center;font-size:1.05rem;color:var(--text-secondary);margin-bottom:3rem}
+
+    .features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:2rem}
+    .feature-card{
+      background:#fff;border-radius:20px;padding:2rem;transition:all .3s;position:relative;overflow:hidden;
+      border:1px solid var(--border);box-shadow:0 6px 16px rgba(0,0,0,.04);
+    }
+    .feature-card::before{
+      content:"";position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg, rgba(0,0,0,.7), rgba(0,0,0,.35));
+      transform:scaleX(0);transition:transform .3s ease;
+    }
+    .feature-card:hover{transform:translateY(-5px);box-shadow:0 20px 40px rgba(0,0,0,.08)}
+    .feature-card:hover::before{transform:scaleX(1)}
+    .feature-icon{
+      width:60px;height:60px;background:#fff;border:1px solid var(--border);color:var(--primary);
+      border-radius:16px;display:flex;align-items:center;justify-content:center;margin-bottom:1.5rem;font-size:28px;
+      box-shadow:0 6px 14px rgba(0,0,0,.06);
+    }
+    .feature-title{font-size:1.5rem;font-weight:700;margin-bottom:1rem}
+    .feature-description{color:var(--text-secondary);line-height:1.7}
+
+    /* ===== Pricing (Freemium) ===== */
+    .pricing{padding:5rem 2rem;background:linear-gradient(135deg,#fafafa 0%,#f5f6f7 100%)}
+    .pricing-grid{
+      display:grid;gap:1.25rem;grid-template-columns:repeat(1,minmax(0,1fr));
+      align-items:stretch;
+    }
+    @media (min-width:880px){.pricing-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    .plan{
+      background:#fff;border:1px solid var(--border);border-radius:20px;padding:1.75rem;
+      box-shadow:0 8px 20px rgba(0,0,0,.06);display:flex;flex-direction:column;gap:1rem;height:100%;
+    }
+    .plan h3{font-size:1.35rem}
+    .price{font-weight:900;font-size:2rem;color:var(--primary)}
+    .feature-list{list-style:none;display:grid;gap:.6rem;margin:.5rem 0 1rem}
+    .feature-list li{display:flex;align-items:flex-start;gap:.5rem;color:var(--text-secondary)}
+    .check{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#0a0a0a;color:#fff;font-size:.9rem;flex:0 0 auto}
+    .x{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:#eee;color:#999;font-size:.9rem;flex:0 0 auto}
+    .actions{margin-top:auto;display:grid;gap:.5rem}
+
+    /* ===== Levels ===== */
+    .levels{padding:5rem 2rem;background:#fff}
+    .levels-grid{display:grid;gap:1.25rem;grid-template-columns:repeat(1,minmax(0,1fr))}
+    @media (min-width:640px){.levels-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media (min-width:1024px){.levels-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    .level-card{background:#fff;border:1px solid var(--border);border-radius:20px;padding:1.25rem;transition:transform .2s, box-shadow .2s}
+    .level-card:hover{transform:translateY(-3px);box-shadow:0 16px 30px rgba(0,0,0,.08)}
+    .level-head{display:flex;align-items:center;justify-content:space-between}
+    .level-chip{font-size:.75rem;color:var(--text-secondary)}
+    .level-title{margin-top:.25rem;font-size:1.5rem;font-weight:800;color:var(--primary)}
+    .level-desc{margin-top:.25rem;font-size:.95rem;color:var(--text-secondary);line-height:1.6}
+
+    /* ===== CTA ===== */
+    .cta{padding:5rem 2rem;text-align:center;background:linear-gradient(135deg,var(--primary) 0%,var(--primary-light) 100%);color:#fff;position:relative;overflow:hidden}
+    .cta::before{content:"";position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle, rgba(0,0,0,.25) 0%, transparent 70%);animation:rotate 30s linear infinite}
+    .cta::after{content:"";position:absolute;bottom:-50%;right:-50%;width:200%;height:200%;background:radial-gradient(circle, rgba(0,0,0,.18) 0%, transparent 70%);animation:rotate 25s linear infinite reverse}
+    .cta-content{position:relative;z-index:10}
+    .cta-title{font-size:2.5rem;font-weight:900;margin-bottom:1rem}
+    .cta-description{font-size:1.25rem;margin-bottom:2rem;opacity:.9}
+
+    /* ===== Footer ===== */
+    footer{padding:3rem 2rem;background:var(--bg-gradient-end);text-align:center;color:var(--text-secondary)}
+
+    /* ===== Responsive ===== */
+    @media (max-width:768px){
+      .hero-content{grid-template-columns:1fr;text-align:center}
+      .hero-buttons{justify-content:center}
+      .nav-links{display:none}
+      .features-grid{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <nav>
+      <div class="logo">
+        <div class="logo-icon">汉</div>
+        <span>HSK Complete</span>
+      </div>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#levels">HSK Levels</a>
+        <a href="#start">Get Started</a>
+        <!-- FREE -> /hsk/app.html -->
+        <a href="/hsk/app.html" class="btn btn-primary" style="padding:.75rem 1.5rem;font-size:1rem;">Launch App</a>
+      </div>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-bg"></div>
+    <div class="floating-characters">
+      <span class="floating-char">学</span>
+      <span class="floating-char">习</span>
+      <span class="floating-char">汉</span>
+      <span class="floating-char">语</span>
+      <span class="floating-char">中</span>
+    </div>
+    <div class="hero-content">
+      <div class="hero-text">
+        <h1 class="hero-title">Master Chinese<br/>The Smart Way</h1>
+        <p class="hero-description">
+          Learn vocabulary, practice with flashcards, and test your knowledge with interactive quizzes. Includes everything from HSK 1 to HSK 6
+        </p>
+        <div class="hero-buttons">
+          <!-- FREE -> /hsk/app.html -->
+          <a href="/hsk/app.html" class="btn btn-primary">
+            <span>🚀</span> Start Learning Free
+          </a>
+          <!-- PAID -> Stripe Payment Link -->
+          <a href="https://buy.stripe.com/YOUR_PAYMENT_LINK" class="btn btn-outline" rel="noopener">
+            <span>🔓</span> Unlock Full App
+          </a>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="app-preview">
+          <div class="app-card">
+            <div class="flashcard">
+              <div class="flashcard-hanzi">爱</div>
+              <div class="flashcard-pinyin">ài</div>
+              <div class="flashcard-english">love</div>
+            </div>
+            <div class="card-controls">
+              <button class="card-btn card-btn-correct">✓ I knew it</button>
+              <button class="card-btn card-btn-wrong">✗ Wrong</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features" id="features">
+    <div class="container">
+      <h2 class="section-title">Everything You Need to Succeed</h2>
+      <p class="section-subtitle">Powerful features designed for effective Chinese learning</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🧠</div>
+          <h3 class="feature-title">Learn Faster, Forget Less</h3>
+          <p class="feature-description">
+            Review at the right moment — learners retain 2× more words in half the time.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <h3 class="feature-title">Track Your Progress</h3>
+          <p class="feature-description">
+            See your growth in real numbers: accuracy, streaks, and words mastered at a glance.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <h3 class="feature-title">Test Like the Real Exam</h3>
+          <p class="feature-description">
+            Interactive quizzes and typing drills built to mirror HSK questions — with instant feedback.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📚</div>
+          <h3 class="feature-title">All HSK Levels, All Words</h3>
+          <p class="feature-description">
+            Access 5,000+ official words from HSK 1–6, neatly organized so nothing is missing.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3 class="feature-title">Word of the Day</h3>
+          <p class="feature-description">
+            A quick daily boost — one new word every morning keeps you moving forward, consistently.
+          </p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔍</div>
+          <h3 class="feature-title">Search & Discover Instantly</h3>
+          <p class="feature-description">
+            Find any word in seconds by hanzi, pinyin, or English, and browse complete level lists.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pricing (Freemium) -->
+  <section class="pricing" id="pricing">
+    <div class="container">
+      <h2 class="section-title">Simple, One-Time Pricing</h2>
+      <p class="section-subtitle">Start free. Unlock everything for just 15€.</p>
+
+      <div class="pricing-grid">
+        <!-- Free plan -->
+        <div class="plan">
+          <h3>Free</h3>
+          <div class="muted">Get started now</div>
+          <div class="price">0€</div>
+          <ul class="feature-list">
+            <li><span class="check">✓</span> HSK 1–2 full access</li>
+            <li><span class="check">✓</span> Flashcards & tests</li>
+            <li><span class="check">✓</span> Daily word</li>
+            <li><span class="check">✓</span> Progress tracking</li>
+            <li><span class="x">•</span> HSK 3–6 content</li>
+            <li><span class="x">•</span> Full vocabulary browsing</li>
+          </ul>
+          <div class="actions">
+            <!-- FREE -> /hsk/app.html -->
+            <a href="/hsk/app.html" class="btn btn-secondary">Start Free</a>
+          </div>
+        </div>
+
+        <!-- Full App -->
+        <div class="plan">
+          <h3>Full App</h3>
+          <div class="muted">HSK 1–6 unlocked</div>
+          <div class="price">15€</div>
+          <ul class="feature-list">
+            <li><span class="check">✓</span> Everything in Free</li>
+            <li><span class="check">✓</span> HSK 3–6 full access</li>
+            <li><span class="check">✓</span> All words & levels</li>
+            <li><span class="check">✓</span> Unlimited tests & reviews</li>
+            <li><span class="check">✓</span> Future updates included</li>
+          </ul>
+          <div class="actions">
+            <!-- PAID -> Stripe Payment Link -->
+            <a href="https://buy.stripe.com/YOUR_PAYMENT_LINK" class="btn btn-primary" rel="noopener">Unlock Full App — 15€</a>
+            <span class="muted">One-time purchase · Instant access</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Levels (6 cards) -->
+  <section class="levels" id="levels">
+    <div class="container">
+      <h2 class="section-title">Comprehensive HSK Preparation</h2>
+      <p class="section-subtitle">Everything you need for all HSK levels</p>
+
+      <div class="levels-grid">
+        <div class="level-card">
+          <div class="level-head"><div class="level-chip">Level</div></div>
+          <div class="level-title">HSK 1</div>
+          <div class="level-desc">Pronunciation basics, survival phrases, core nouns & verbs.</div>
+        </div>
+
+        <div class="level-card">
+          <div class="level-head"><div class="level-chip">Level</div></div>
+          <div class="level-title">HSK 2</div>
+          <div class="level-desc">Daily routines, time & frequency, useful sentence patterns.</div>
+        </div>
+
+        <div class="level-card">
+          <div class="level-head"><div class="level-chip">Level</div></div>
+          <div class="level-title">HSK 3</div>
+          <div class="level-desc">Describing people & places, comparisons, common connectors.</div>
+        </div>
+
+        <div class="level-card">
+          <div class="level-head"><div class="level-chip">Level</div></div>
+          <div class="level-title">HSK 4</div>
+          <div class="level-desc">Opinions, abstract topics, longer sentences with nuance.</div>
+        </div>
+
+        <div class="level-card">
+          <div class="level-head"><div class="level-chip">Level</div></div>
+          <div class="level-title">HSK 5</div>
+          <div class="level-desc">Idioms & collocations, news & literature, natural phrasing.</div>
+        </div>
+
+        <div class="level-card">
+          <div class="level-head"><div class="level-chip">Level</div></div>
+          <div class="level-title">HSK 6</div>
+          <div class="level-desc">Fluent comprehension, fine-grained tone & style control.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta" id="start">
+    <div class="cta-content">
+      <h2 class="cta-title">Ready to Master Chinese?</h2>
+      <p class="cta-description">Start free on HSK 1–2 — unlock the full app anytime.</p>
+      <div style="display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap">
+        <!-- FREE -> /hsk/app.html -->
+        <a href="/hsk/app.html" class="btn btn-cta">Start Free</a>
+        <!-- PAID -> Stripe Payment Link -->
+        <a href="https://buy.stripe.com/YOUR_PAYMENT_LINK" class="btn btn-secondary" rel="noopener">Unlock Full App — 15€</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <p>© 2025 HSK Complete — All rights reserved</p>
+  </footer>
+
+  <script>
+    // Smooth scroll
+    document.querySelectorAll('a[href^="#"]').forEach(a=>{
+      a.addEventListener('click',e=>{
+        e.preventDefault();
+        const t=document.querySelector(a.getAttribute('href'));
+        if(t) t.scrollIntoView({behavior:'smooth',block:'start'});
+      });
+    });
+
+    // Header shadow on scroll
+    window.addEventListener('scroll',()=>{
+      const h=document.querySelector('header');
+      h.style.boxShadow=window.pageYOffset>100?'0 2px 20px rgba(0,0,0,.1)':'none';
+    });
+
+    // Parallax for floating characters
+    window.addEventListener('scroll',()=>{
+      const s=window.pageYOffset;
+      document.querySelectorAll('.floating-char').forEach(el=>{
+        el.style.transform=`translateY(${s*.5}px)`;
+      });
+    });
+  </script>
+</body>
 </html>
